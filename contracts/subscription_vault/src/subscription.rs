@@ -1688,11 +1688,14 @@ pub fn do_resume_subscription(
     if sub.status == SubscriptionStatus::Active {
         return Ok(());
     }
-    if (sub.status == SubscriptionStatus::InsufficientBalance
-        || sub.status == SubscriptionStatus::GracePeriod)
-        && sub.prepaid_balance < sub.amount
+    if sub.status == SubscriptionStatus::InsufficientBalance
+        || sub.status == SubscriptionStatus::GracePeriod
     {
-        return Err(Error::InsufficientBalance);
+        // A resumed subscription must have enough prepaid funds to cover the
+        // next interval before it is allowed back into Active.
+        if sub.prepaid_balance < sub.amount {
+            return Err(Error::InsufficientBalance);
+        }
     }
 
     let previous_status = sub.status;
