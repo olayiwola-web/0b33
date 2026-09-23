@@ -123,6 +123,36 @@ fn test_active_to_paused_to_active() {
     assert_eq!(sub_resumed.prepaid_balance, initial_balance);
 }
 
+/// Resuming from InsufficientBalance must not silently re-enable billing unless
+/// the prepaid balance is now sufficient for at least one interval charge.
+#[test]
+fn test_resume_from_insufficient_balance_requires_sufficient_balance() {
+    let (env, client, token, _) = setup();
+    let (id, subscriber, _) = create_sub(&env, &client);
+
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    token_admin.mint(&subscriber, &AMOUNT - 1);
+    client.deposit_funds(&id, &subscriber, &(AMOUNT - 1), &None::<soroban_sdk::BytesN<32>>);
+
+    client.get_subscription(&id);
+    set_balance(&env, &client, id, AMOUNT - 1);
+    let sub_before = client.get_subscription(&id);
+    assert_eq!(sub_before.status, SubscriptionStatus::Active);
+
+    // Simulate the contract having already transitioned to InsufficientBalance,
+    // while only a partial top-up is available.
+    set_balance(&env, &client, id, AMOUNT - 1);
+    env.as_contract(&client.address, || {
+        let mut sub = env.storage().persistent().get(&DataKey::Sub(id)).unwrap().unwrap();
+        sub.status = SubscriptionStatus::InsufficientBalance;
+        env.storage().persistent().set(&DataKey::Sub(id), &sub);
+    });
+
+    let result = client.try_resume_subscription(&id, &subscriber);
+    assert_eq!(result, Err(Ok(Error::InsufficientBalance)));
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::InsufficientBalance);
+}
+
 // ── Valid transition: Active → Cancelled ─────────────────────────────────────
 
 /// Cancelling an Active subscription moves it to the terminal Cancelled state.
